@@ -1,0 +1,210 @@
+---
+title: "NYPD_Shooting"
+author: "Edison"
+date: '2022-06-20'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Data is on every shooting that occurred in NYC from 2006 to the end of the previous calender year which should mean end of December 2021.
+
+Every row in the data corresponds to a single shooting incident. Location and demographic data are included.
+
+## Load Packages
+
+```{r load_packages}
+library(tidyverse)
+library(pander) # only for the single markdown table, can skip
+```
+
+## Read Data
+
+Let's load in the data from: <https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic>
+
+```{r load_data}
+data_raw <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+```
+
+# Preparing Data
+
+```{r summary_raw}
+summary(data_raw)
+```
+
+```{r peer_raw}
+head(data_raw)
+```
+
+Let's take a look at the column descriptions:
+
+source: <https://data.cityofnewyork.us/Public-Safety/NYPD-Shooting-Incident-Data-Historic-/833y-fsy8>
+
+```{r desc_table, echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+desc_tabl <- "
+| Column Name | Description |
+|-------------|-------------|
+| INCIDENT_KEY | Randomly generated persistent ID for each arrest |
+| OCCUR_DATE | Exact date of the shooting incident |
+| OCCUR_TIME | Exact time of the shooting incident |
+| BORO | Borough where the shooting incident occurred |
+| PRECINCT | Precinct where the shooting incident occurred |
+| JURISDICTION_CODE | Jurisdiction where the shooting incident occurred. Jurisdiction codes 0(Patrol), 1(Transit) and 2(Housing) represent NYPD whilst codes 3 and more represent non NYPD jurisdictions |
+| LOCATION_DESC | Location of the shooting incident |
+| STATISTICAL_MURDER_FLAG | Shooting resulted in the victim’s death which would be counted as a murder |
+| PERP_AGE_GROUP | Perpetrator’s age within a category |
+| PERP_SEX | Perpetrator’s sex description |
+| PERP_RACE | Perpetrator’s race description |
+| VIC_AGE_GROUP | Victim’s age within a category |
+| VIC_SEX | Victim’s sex description |
+| VIC_RACE | Victim’s race description | 
+| X_COORD_CD | Midblock X-coordinate for New York State Plane Coordinate System, Long Island Zone, NAD 83, units feet (FIPS 3104) |
+| Y_COORD_CD | Midblock Y-coordinate for New York State Plane Coordinate System, Long Island Zone, NAD 83, units feet (FIPS 3104) |
+| Latitude | Latitude coordinate for Global Coordinate System, WGS 1984, decimal degrees (EPSG 4326) |
+| Longitude | Longitude coordinate for Global Coordinate System, WGS 1984, decimal degrees (EPSG 4326) |
+| Lon_Lat | Longitude and Latitude Coordinates for mapping |
+"
+
+cat(desc_tabl)
+```
+
+## Data Visualization
+
+Let's see how the genders stacked up in the dataset.
+
+First we'll take a look at the victims.
+
+```{r pie_chart_vsex}
+vic_sex <- data_raw %>% count(VIC_SEX)
+vic_sex$n <- vic_sex$n / nrow(data_raw)
+ggplot(vic_sex, aes(x = "", y=n, fill=VIC_SEX)) +
+  geom_col() +
+  geom_text(aes(label = round(n, digits=3)),
+            position = position_stack(vjust = 0.5)) +
+  theme_void() +
+  coord_polar(theta = "y")
+```
+
+Now let's take a look at the perp's sex distribution.
+
+```{r pie_chart_psex}
+perp_sex <- data_raw %>% count(PERP_SEX)
+perp_sex$n <- perp_sex$n / nrow(data_raw)
+ggplot(perp_sex, aes(x = "", y=n, fill=PERP_SEX)) +
+  geom_col() +
+  geom_text(aes(label = round(n, digits=3)),
+            position = position_stack(vjust = 0.5)) +
+  theme_void() +
+  coord_polar(theta = "y")
+```
+
+Males make the majority of victims and perps. Of the known data, women are even less likely to be the perp. The perp data does have a lot of NA and UNKNOWN data. 
+
+What else could we explore with this data? Well we could see if a popular statistic is also true for this dataset. 
+
+I believe the statistic is that murders tend to be largely within race.
+
+Let's trim this down to relevant columns.
+
+```{r subset_data}
+data <- data_raw[c("PERP_RACE", "VIC_RACE")]
+colSums(is.na(data))
+```
+
+The missing data for these these two columns are only in PERP_RACE. It must be when the perp is not caught and is unknown.
+
+Let's remove the rows with NA.
+
+```{r remove_na}
+print(nrow(data))
+data_no_na <- na.omit(data)
+print(nrow(data_no_na))
+```
+Over a third of the data is dropped which is quite a lot. However, having missing PERP_RACE data would not be helpful for our purposes. 
+
+Let's see how the PERP_RACE values look like:
+
+```{r perp_race_counts}
+data_no_na %>% count(PERP_RACE)
+```
+
+Now let's take a look at the corresponding VIC_RACE values:
+
+```{r vic_race_counts}
+data_no_na %>% count(VIC_RACE)
+```
+
+Seems like there is a lot of similarity across the two. The UNKNOWN labels seem like they would be problematic as the number for UNKNOWN is a lot higher than the UNKNOWN for the VIC_RACE. 
+
+I will drop any row that contains UNKNOWN as well. 
+
+```{r drop_unkown}
+data_complete <- data_no_na[rowSums(data_no_na == "UNKNOWN")==0, , drop = FALSE]
+data_complete %>% count(VIC_RACE)
+```
+
+```{r perp_race_no_unkown}
+data_complete %>% count(PERP_RACE)
+```
+
+Data distribution in PERP and VIC race seems pretty similar.
+
+Data went from 25596 rows to 14409 rows so we lost about half our data which is a lot.
+
+Let's make a new column that prints 1 if both VIC_RACE and PERP_RACE is exactly the same.
+
+```{r same_race_col}
+data_complete$SAME_RACE <- as.factor(data_complete$VIC_RACE == data_complete$PERP_RACE)
+frequency_table <- data_complete %>% count(SAME_RACE)
+frequency_table$n <- frequency_table$n / nrow(data_complete)
+frequency_table
+```
+
+Let's visualize this really quick
+
+```{r pie_chart_same}
+ggplot(frequency_table, aes(x = "", y=n, fill=SAME_RACE)) +
+  geom_col() +
+  geom_text(aes(label = round(n, digits=3)),
+            position = position_stack(vjust = 0.5)) +
+  theme_void() +
+  coord_polar(theta = "y")
+```
+
+
+While not high as I expected, in about 69% of all shootings, where both the victim and perp races are known, they are of the same race label.
+
+To get some insight on why it might not be higher, let's take a look at the counts between PERP_VIC of each race type. 
+
+```{r race_interact}
+data_complete$PERP_VIC <- paste(data_complete$PERP_RACE, "-", data_complete$VIC_RACE)
+data_complete %>% count(PERP_VIC)
+```
+
+As we can see BLACK HISPANIC to BLACK wouldn't count as same race using our current matching method, so if we wanted to include those, we would need a function more complex. The TRUE rate would be higher if we included these cases.
+
+Let's leave it as is, but let's be aware of this issue.
+
+# Model
+
+Let's see if any PERP race can be used to predict the created SAME_RACE factor better than others.
+
+```{r log_model}
+model <- glm(SAME_RACE ~ PERP_RACE, data = data_complete, family = "binomial")
+summary(model)
+```
+
+As we can see, none of the variables are significant. It seems like individual PERP race is not a good indicator of whether the VIC_RACE will be exactly the same.
+
+Since percentage of SAME_RACE shooting is about 69% and likely over if we include race subcategory Hispanic, it would likely be that any model will predict that SAME_RACE is true regardless of PERP_RACE category. 
+
+# Conclusion
+
+In this report, we examined our NYPD dataset to see if it fit a popular FBI statistic that murders largely tend to have victims of the same race. We saw that the NYPD does seem to match this statistic where nearly 69% of the shooting cases where both perpetrator and victim races are known, both are of the same race. There are some conflicts with this category with how Hispanic sub categories can be counted, but that will be left for future analysis. We took this SAME_RACE variable and regressed it on PERP_RACE and found that there wasn't enough evidence to conclude that any race is more likely than others to shoot someone who is of the race.
+
+Is there any possible bias in the data source? Well it is reported by the police department and since the perpetrator can sometimes be missing or unknown, it is difficult to say whether a source of bias can be induced. I am not sure how the perpetrator race factors are determined either and could be based off eyewitness testimony. Those could be unreliable as well as people don't have the best of memory and can be biased as well. Victim race seems a lot less likely to be unbiased since the data would be more accurate due to being dead or at the incident report themselves. Further analysis can be done to see if there are any good indicators to predict missing race or age group categories based on location, borough, and victim demographics.
+
